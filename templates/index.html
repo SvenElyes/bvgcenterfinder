@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BVG Meeting-Point Finder</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f0f2f5; color: #222; padding: 2rem; max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+    .subtitle { color: #666; margin-bottom: 2rem; font-size: 0.9rem; }
+    .card { background: #fff; border-radius: 10px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 1.25rem; }
+
+    /* inputs */
+    .stops-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+    .stop-row { display: flex; gap: 0.5rem; align-items: center; }
+    .stop-row input { flex: 1; padding: 0.5rem 0.75rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; }
+    .stop-row button.remove { background: none; border: 1px solid #ccc; border-radius: 6px; width: 2rem; height: 2rem; cursor: pointer; font-size: 1.1rem; color: #888; }
+    .stop-row button.remove:hover { color: #c00; border-color: #c00; }
+    .add-btn { background: none; border: 1px dashed #aaa; border-radius: 6px; padding: 0.4rem 1rem; cursor: pointer; color: #555; font-size: 0.9rem; margin-bottom: 1rem; }
+    .add-btn:hover { background: #f0f0f0; }
+    .options { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: flex-end; }
+    .options label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: #555; }
+    .options select, .options input[type=text], .options input[type=number] {
+      padding: 0.4rem 0.6rem; border: 1px solid #ccc; border-radius: 6px; font-size: 0.95rem;
+    }
+    .go-btn { padding: 0.6rem 1.8rem; background: #0057a8; color: #fff; border: none; border-radius: 6px; font-size: 1rem; cursor: pointer; }
+    .go-btn:hover { background: #0047a0; }
+    .go-btn:disabled { background: #aaa; cursor: default; }
+
+    /* progress */
+    #progress-wrap { margin-top: 1rem; display: none; }
+    #progress-label { font-size: 0.85rem; color: #555; margin-bottom: 0.3rem; }
+    #progress-bar-outer { background: #e8e8e8; border-radius: 6px; height: 10px; overflow: hidden; }
+    #progress-bar-inner { height: 100%; background: #0057a8; width: 0%; transition: width 0.35s ease; border-radius: 6px; }
+    #status { font-size: 0.9rem; color: #666; min-height: 1.4em; margin-top: 0.5rem; }
+    #status.error { color: #c00; }
+
+    /* tables */
+    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    th { text-align: left; border-bottom: 2px solid #eee; padding: 0.4rem 0.6rem; color: #555; font-weight: 600; white-space: nowrap; }
+    td { padding: 0.45rem 0.6rem; border-bottom: 1px solid #f0f0f0; }
+    tr:last-child td { border-bottom: none; }
+    .rank { font-weight: bold; color: #0057a8; }
+    .legend { margin-top: 0.6rem; font-size: 0.8rem; color: #888; }
+
+    /* map */
+    .map-img { display: block; width: 100%; border-radius: 8px; margin-top: 1rem; }
+
+    /* all-mode summary table */
+    #summary-card { display: none; }
+    #summary-card h2 { font-size: 1.1rem; margin-bottom: 1rem; color: #333; }
+    .summary-table td.best { font-weight: 600; color: #0057a8; }
+    .summary-table td.win { background: #eaf3ff; font-weight: 600; }
+    .badge { display: inline-block; font-size: 0.72rem; background: #0057a8; color: #fff; border-radius: 4px; padding: 1px 5px; vertical-align: middle; margin-left: 4px; }
+
+    /* collapsible strategy cards */
+    .strategy-block { margin-bottom: 0; border-bottom: 1px solid #f0f0f0; }
+    .strategy-block:last-child { border-bottom: none; }
+    .strategy-header {
+      display: flex; align-items: center; gap: 0.6rem;
+      padding: 0.85rem 1.5rem; cursor: pointer; user-select: none;
+      background: #fff; transition: background 0.15s;
+    }
+    .strategy-header:hover { background: #f7f9fc; }
+    .strategy-header .s-name { font-weight: 600; font-size: 0.95rem; min-width: 110px; }
+    .strategy-header .s-top { font-size: 0.9rem; color: #0057a8; flex: 1; }
+    .strategy-header .s-top.loading { color: #aaa; font-style: italic; }
+    .strategy-header .s-max { font-size: 0.85rem; color: #555; white-space: nowrap; }
+    .strategy-header .chevron { font-size: 0.75rem; color: #aaa; transition: transform 0.2s; }
+    .strategy-block.open .chevron { transform: rotate(90deg); }
+    .strategy-body { display: none; padding: 0 1.5rem 1rem; }
+    .strategy-block.open .strategy-body { display: block; }
+    .strategy-body .s-desc { font-size: 0.8rem; color: #999; margin-bottom: 0.6rem; }
+    .strategy-body .warn { color: #a60; font-size: 0.85rem; }
+    .strategy-body .err  { color: #c00; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>BVG Meeting-Point Finder</h1>
+  <p class="subtitle">Find the fairest Berlin stop to meet at — minimising the longest travel time.</p>
+
+  <div class="card">
+    <div class="stops-list" id="stops-list">
+      <div class="stop-row">
+        <input type="text" placeholder="Start stop (e.g. Mehringdamm)" value="burgsdorfstrasse 8" />
+        <button class="remove" title="Remove">×</button>
+      </div>
+      <div class="stop-row">
+        <input type="text" placeholder="Start stop (e.g. Alexanderplatz)" value="eresburgstrasse 5" />
+        <button class="remove" title="Remove">×</button>
+      </div>
+    </div>
+    <button class="add-btn" id="add-btn">+ Add person</button>
+
+    <div class="options">
+      <label>
+        Strategy
+        <select id="strategy">
+          <option value="all">— all strategies —</option>
+          {% for name, desc in strategies.items() %}
+          <option value="{{ name }}" {% if name == 'union' %}selected{% endif %} title="{{ desc }}">{{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Top results
+        <input type="number" id="top" value="3" min="1" max="10" style="width:4rem" />
+      </label>
+      <label>
+        Depart at (optional)
+        <input type="text" id="when" placeholder="e.g. tomorrow 2pm" style="width:14rem" />
+      </label>
+    </div>
+
+    <button class="go-btn" id="go-btn">Find meeting point</button>
+    <div id="progress-wrap">
+      <div id="progress-label">Starting…</div>
+      <div id="progress-bar-outer"><div id="progress-bar-inner"></div></div>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <!-- Single-strategy result -->
+  <div class="card" id="single-card" style="display:none">
+    <div id="single-results"></div>
+    <img id="map-img" class="map-img" style="display:none" alt="Map" />
+  </div>
+
+  <!-- All-strategies summary -->
+  <div class="card" id="summary-card">
+    <h2>Strategy comparison <span id="summary-note" style="font-weight:400;font-size:0.85rem;color:#888"></span></h2>
+    <div id="summary-table-wrap"></div>
+  </div>
+
+  <!-- All-strategies detail cards -->
+  <div class="card" id="detail-card" style="display:none; padding: 0; overflow: hidden;">
+    <div style="padding: 1rem 1.5rem 0.75rem; border-bottom: 2px solid #f0f0f0;">
+      <strong style="font-size:0.95rem">Per-strategy details</strong>
+      <span style="font-size:0.82rem;color:#888;margin-left:0.5rem">click to expand</span>
+    </div>
+    <div id="detail-blocks"></div>
+  </div>
+
+  <script>
+    const listEl      = document.getElementById('stops-list');
+    const addBtn      = document.getElementById('add-btn');
+    const goBtn       = document.getElementById('go-btn');
+    const statusEl    = document.getElementById('status');
+    const progressWrap  = document.getElementById('progress-wrap');
+    const progressLabel = document.getElementById('progress-label');
+    const progressBar   = document.getElementById('progress-bar-inner');
+    const singleCard  = document.getElementById('single-card');
+    const singleDiv   = document.getElementById('single-results');
+    const mapImg      = document.getElementById('map-img');
+    const summaryCard = document.getElementById('summary-card');
+    const summaryNote = document.getElementById('summary-note');
+    const summaryWrap = document.getElementById('summary-table-wrap');
+    const detailCard  = document.getElementById('detail-card');
+    const detailBlocks= document.getElementById('detail-blocks');
+
+    // ── stop-row management ───────────────────────────────────────────────────
+    function updateRemoveButtons() {
+      const rows = listEl.querySelectorAll('.stop-row');
+      rows.forEach(r => r.querySelector('.remove').disabled = rows.length <= 2);
+    }
+    function addRow() {
+      const row = document.createElement('div');
+      row.className = 'stop-row';
+      row.innerHTML = `<input type="text" placeholder="Start stop" /><button class="remove" title="Remove">×</button>`;
+      row.querySelector('.remove').addEventListener('click', () => {
+        if (listEl.querySelectorAll('.stop-row').length > 2) { row.remove(); updateRemoveButtons(); }
+      });
+      listEl.appendChild(row);
+      updateRemoveButtons();
+    }
+    listEl.querySelectorAll('.remove').forEach(btn => btn.addEventListener('click', () => {
+      if (listEl.querySelectorAll('.stop-row').length > 2) { btn.closest('.stop-row').remove(); updateRemoveButtons(); }
+    }));
+    addBtn.addEventListener('click', addRow);
+    updateRemoveButtons();
+
+    // ── progress ──────────────────────────────────────────────────────────────
+    function setProgress(done, total, label) {
+      progressWrap.style.display = '';
+      progressLabel.textContent = label;
+      progressBar.style.width = total ? `${Math.round(done / total * 100)}%` : '0%';
+    }
+    function hideProgress() { progressWrap.style.display = 'none'; }
+    function setStatus(msg, isError = false) {
+      statusEl.textContent = msg;
+      statusEl.className = isError ? 'error' : '';
+    }
+
+    // ── table helpers ─────────────────────────────────────────────────────────
+    function buildTable(results, startsInfo) {
+      const pHeaders = startsInfo.map((_, i) => `<th>P${i+1}</th>`).join('');
+      const rows = results.map((r, i) =>
+        `<tr><td class="rank">${i+1}</td><td>${r.name}</td><td>${r.max_min}</td><td>${r.sum_min}</td>
+         ${r.per_person_min.map(m => `<td>${m}</td>`).join('')}</tr>`
+      ).join('');
+      const legend = startsInfo.map((s, i) => `P${i+1} = ${s.name}`).join(' · ');
+      return `<table><thead><tr><th>#</th><th>Stop</th><th>Max (min)</th><th>Sum (min)</th>${pHeaders}</tr></thead>
+              <tbody>${rows}</tbody></table>
+              <div class="legend">${legend}</div>`;
+    }
+
+    function buildMapUrl(startsInfo, topResult) {
+      const p = new URLSearchParams();
+      p.set('meet_lat', topResult.lat);
+      p.set('meet_lon', topResult.lon);
+      startsInfo.forEach(s => { p.append('slat', s.lat); p.append('slon', s.lon); });
+      return `/api/map?${p}`;
+    }
+
+    // ── single strategy ───────────────────────────────────────────────────────
+    async function runSingle(starts, strategy, top, when) {
+      setProgress(0, 1, `Running "${strategy}"…`);
+      const resp = await fetch('/api/find', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ starts, strategy, top, when }),
+      });
+      const data = await resp.json();
+      setProgress(1, 1, 'Done');
+      if (!resp.ok) throw new Error(data.error || 'Unknown error.');
+
+      singleDiv.innerHTML = buildTable(data.results, data.starts);
+      if (data.results.length && data.results[0].lat != null) {
+        mapImg.src = buildMapUrl(data.starts, data.results[0]);
+        mapImg.style.display = '';
+      }
+      singleCard.style.display = '';
+    }
+
+    // ── all strategies ────────────────────────────────────────────────────────
+    // Summary table state
+    let summaryRows = {}; // name -> { results, desc }
+    let startsInfo = null;
+
+    function initSummaryTable(strategyNames) {
+      summaryWrap.innerHTML = '';
+      summaryRows = {};
+      const pHeaders = ''; // filled later when startsInfo arrives
+      const tbody = document.createElement('tbody');
+      const table = document.createElement('table');
+      table.className = 'summary-table';
+      table.innerHTML = `<thead><tr><th>Strategy</th><th>Top pick</th><th>Max (min)</th><th>Sum (min)</th></tr></thead>`;
+      table.appendChild(tbody);
+      summaryWrap.appendChild(table);
+      summaryCard.style.display = '';
+
+      strategyNames.forEach(name => {
+        const tr = document.createElement('tr');
+        tr.id = `sum-${name}`;
+        tr.innerHTML = `<td><strong>${name}</strong></td><td colspan="3" style="color:#bbb;font-style:italic">running…</td>`;
+        tbody.appendChild(tr);
+        summaryRows[name] = tr;
+      });
+    }
+
+    function updateSummaryRow(name, results, error, warning) {
+      const tr = summaryRows[name];
+      if (!tr) return;
+      if (error) {
+        tr.innerHTML = `<td><strong>${name}</strong></td><td colspan="3" class="err">Error: ${error}</td>`;
+      } else if (!results.length) {
+        tr.innerHTML = `<td><strong>${name}</strong></td><td colspan="3" class="warn">${warning || 'No results'}</td>`;
+      } else {
+        const r = results[0];
+        tr.innerHTML = `<td><strong>${name}</strong></td><td class="best">${r.name}</td><td>${r.max_min}</td><td>${r.sum_min}</td>`;
+      }
+    }
+
+    function highlightSummaryWinners() {
+      // Find best max_min across all strategies
+      let bestMax = Infinity;
+      Object.values(summaryRows).forEach(tr => {
+        const cells = tr.querySelectorAll('td');
+        if (cells.length >= 3) {
+          const v = parseFloat(cells[2].textContent);
+          if (!isNaN(v) && v < bestMax) bestMax = v;
+        }
+      });
+      Object.values(summaryRows).forEach(tr => {
+        const cells = tr.querySelectorAll('td');
+        if (cells.length >= 3) {
+          const v = parseFloat(cells[2].textContent);
+          if (!isNaN(v) && v === bestMax) {
+            cells[2].classList.add('win');
+            cells[1].insertAdjacentHTML('beforeend', '<span class="badge">best</span>');
+          }
+        }
+      });
+    }
+
+    function addDetailBlock(name, desc) {
+      const block = document.createElement('div');
+      block.className = 'strategy-block';
+      block.id = `detail-${name}`;
+      block.innerHTML = `
+        <div class="strategy-header">
+          <span class="s-name">${name}</span>
+          <span class="s-top loading" id="dtop-${name}">running…</span>
+          <span class="s-max" id="dmax-${name}"></span>
+          <span class="chevron">▶</span>
+        </div>
+        <div class="strategy-body">
+          <div class="s-desc">${desc}</div>
+          <div id="dbody-${name}"><em style="color:#bbb">Loading…</em></div>
+          <img id="dmap-${name}" class="map-img" style="display:none" alt="Map" />
+        </div>`;
+      block.querySelector('.strategy-header').addEventListener('click', () => {
+        block.classList.toggle('open');
+      });
+      detailBlocks.appendChild(block);
+      return block;
+    }
+
+    function updateDetailBlock(name, results, error, warning) {
+      const topEl = document.getElementById(`dtop-${name}`);
+      const maxEl = document.getElementById(`dmax-${name}`);
+      const bodyEl = document.getElementById(`dbody-${name}`);
+      const dmapEl = document.getElementById(`dmap-${name}`);
+
+      if (topEl) topEl.classList.remove('loading');
+
+      if (error) {
+        if (topEl) { topEl.textContent = 'error'; topEl.style.color = '#c00'; }
+        if (bodyEl) bodyEl.innerHTML = `<span class="err">Error: ${error}</span>`;
+      } else if (!results.length) {
+        if (topEl) { topEl.textContent = warning || 'no results'; topEl.style.color = '#a60'; }
+        if (bodyEl) bodyEl.innerHTML = `<span class="warn">${warning || 'No results'}</span>`;
+      } else {
+        const r = results[0];
+        if (topEl) { topEl.textContent = r.name; topEl.style.color = '#0057a8'; }
+        if (maxEl) maxEl.textContent = `max ${r.max_min} min`;
+        if (bodyEl) bodyEl.innerHTML = buildTable(results, startsInfo);
+        if (dmapEl && r.lat != null && startsInfo) {
+          dmapEl.src = buildMapUrl(startsInfo, r);
+          dmapEl.style.display = '';
+        }
+      }
+    }
+
+    function runAll(starts, top, when) {
+      return new Promise((resolve, reject) => {
+        detailBlocks.innerHTML = '';
+        detailCard.style.display = 'none';
+
+        const body = JSON.stringify({ starts, top, when });
+        fetch('/api/find/all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        }).then(resp => {
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          let total = 0;
+          let done = 0;
+
+          function processChunk(chunk) {
+            buf += decoder.decode(chunk, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop();
+            for (const part of parts) {
+              const lines = part.trim().split('\n');
+              let event = 'message', data = null;
+              for (const line of lines) {
+                if (line.startsWith('event: ')) event = line.slice(7);
+                if (line.startsWith('data: '))  data = JSON.parse(line.slice(6));
+              }
+              if (!data) continue;
+
+              if (event === 'start') {
+                startsInfo = data.starts;
+                total = data.total;
+                setProgress(0, total, `Running all ${total} strategies…`);
+                const names = Object.keys(data).length; // placeholder; real names from strategy_start
+              }
+
+              if (event === 'strategy_start') {
+                if (done === 0 && !document.getElementById(`detail-${data.name}`)) {
+                  // first time: init summary with all names accumulated on start
+                }
+                addDetailBlock(data.name, data.description);
+                detailCard.style.display = '';
+                // init summary lazily
+                if (!summaryRows[data.name]) {
+                  if (Object.keys(summaryRows).length === 0) summaryCard.style.display = '';
+                  const tbody = summaryWrap.querySelector('tbody') || (() => {
+                    const t = document.createElement('table');
+                    t.className = 'summary-table';
+                    t.innerHTML = `<thead><tr><th>Strategy</th><th>Top pick</th><th>Max (min)</th><th>Sum (min)</th></tr></thead>`;
+                    const b = document.createElement('tbody');
+                    t.appendChild(b);
+                    summaryWrap.appendChild(t);
+                    summaryCard.style.display = '';
+                    return b;
+                  })();
+                  const realTbody = summaryWrap.querySelector('tbody');
+                  const tr = document.createElement('tr');
+                  tr.id = `sum-${data.name}`;
+                  tr.innerHTML = `<td><strong>${data.name}</strong></td><td colspan="3" style="color:#bbb;font-style:italic">running…</td>`;
+                  realTbody.appendChild(tr);
+                  summaryRows[data.name] = tr;
+                }
+              }
+
+              if (event === 'strategy_done') {
+                done++;
+                setProgress(done, total, `${done} / ${total} strategies done`);
+                updateSummaryRow(data.name, data.results, data.error, data.warning);
+                updateDetailBlock(data.name, data.results, data.error, data.warning);
+              }
+
+              if (event === 'error') reject(new Error(data.message));
+              if (event === 'complete') {
+                highlightSummaryWinners();
+                summaryNote.textContent = `— ${done} strategies, best max highlighted`;
+                resolve();
+              }
+            }
+          }
+
+          function pump() {
+            reader.read().then(({ done: streamDone, value }) => {
+              if (value) processChunk(value);
+              if (!streamDone) pump(); else resolve();
+            }).catch(reject);
+          }
+          pump();
+        }).catch(reject);
+      });
+    }
+
+    // ── main ──────────────────────────────────────────────────────────────────
+    goBtn.addEventListener('click', async () => {
+      const starts = [...listEl.querySelectorAll('input')].map(i => i.value.trim()).filter(Boolean);
+      if (starts.length < 2) { setStatus('Enter at least 2 start stops.', true); return; }
+
+      const strategy = document.getElementById('strategy').value;
+      const top      = parseInt(document.getElementById('top').value) || 3;
+      const when     = document.getElementById('when').value.trim() || null;
+
+      goBtn.disabled = true;
+      setStatus('');
+      singleCard.style.display = 'none';
+      summaryCard.style.display = 'none';
+      summaryWrap.innerHTML = '';
+      summaryRows = {};
+      detailCard.style.display = 'none';
+      detailBlocks.innerHTML = '';
+      mapImg.style.display = 'none';
+      startsInfo = null;
+
+      try {
+        if (strategy === 'all') {
+          await runAll(starts, top, when);
+          setStatus('');
+        } else {
+          await runSingle(starts, strategy, top, when);
+          setStatus('');
+        }
+      } catch (e) {
+        setStatus(e.message, true);
+      } finally {
+        goBtn.disabled = false;
+        hideProgress();
+      }
+    });
+  </script>
+</body>
+</html>
